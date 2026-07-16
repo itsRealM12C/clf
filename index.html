@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CLF — Color Format Extractor</title>
+<style>
+  *{box-sizing:border-box; -webkit-tap-highlight-color: rgba(255, 255, 255, 0);}
+  body{
+    margin:0; min-height:100vh; padding:40px 20px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:#0a0a0a; color:#eee; display:flex; flex-direction:column; align-items:center;
+  }
+  h1{ font-size:18px; font-weight:600; margin:0 0 28px; letter-spacing:-0.01em; color:#fff; }
+  .wrap{ width:100%; max-width:560px; }
+  .drop{
+    border:1.5px dashed #333; border-radius:20px; padding:36px 20px;
+    text-align:center; color:#777; cursor:pointer; font-size:14px;
+    transition:.15s; background:#141414; margin-bottom:16px;
+  }
+  .drop.drag{ border-color:#fff; color:#fff; background:#1c1c1c; }
+  input[type=file]{ display:none; }
+
+  .filelist{ display:flex; flex-direction:column; gap:8px; margin-bottom:20px; }
+  .filepill{
+    display:flex; align-items:center; justify-content:space-between;
+    background:#141414; border:1px solid #262626; border-radius:14px;
+    padding:12px 16px; font-size:13px; cursor:pointer; transition:.15s; color:#eee;
+  }
+  .filepill.active{ border-color:#fff; background:#fff; color:#0a0a0a; }
+  .filepill .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:340px; }
+  .filepill .rm{ color:#555; padding-left:10px; }
+  .filepill.active .rm{ color:#999; }
+  .filepill .rm:hover{ color:#e33; }
+
+  .canvas-card{
+    background:#141414; border:1px solid #262626; border-radius:20px;
+    padding:16px; display:flex; align-items:center; justify-content:center;
+    min-height:280px; margin-bottom:18px;
+  }
+  .canvas-card.empty{ color:#555; font-size:13px; }
+  canvas{ max-width:100%; border-radius:12px; display:block; }
+
+  .meta{
+    display:flex; gap:8px; justify-content:center; margin:-4px 0 18px;
+    font-size:12px; color:#888;
+  }
+  .meta span{
+    background:#141414; border:1px solid #262626; border-radius:10px;
+    padding:5px 12px;
+  }
+  .meta b{ color:#eee; font-weight:600; }
+
+  .actions{ display:flex; gap:10px; }
+  button{
+    flex:1; border:none; border-radius:14px; padding:13px 16px;
+    font-size:14px; font-weight:600; cursor:pointer; transition:.15s;
+  }
+  button.primary{ background:#fff; color:#0a0a0a; }
+  button.primary:hover{ background:#ddd; }
+  button.secondary{ background:#141414; color:#eee; border:1px solid #333; }
+  button.secondary:hover{ background:#1c1c1c; }
+  button:disabled{ opacity:.35; cursor:default; }
+
+  .err{ color:#e55; font-size:12px; margin-top:10px; text-align:center; }
+</style>
+</head>
+<body>
+
+<h1>CLF - Color Format File Extractor</h1>
+
+<div class="wrap">
+  <div class="drop" id="drop">Drop RGB / RGBA / YUV 4:2:2 files here, or click to browse</div>
+  <input type="file" id="fileInput" multiple>
+
+  <div class="filelist" id="filelist"></div>
+
+  <div class="canvas-card empty" id="canvasWrap">Preview will appear here</div>
+
+  <div class="meta" id="meta" style="display:none;">
+    <span>Format: <b id="metaFormat">–</b></span>
+    <span>Resolution: <b id="metaRes">–</b></span>
+  </div>
+
+  <div class="actions">
+    <button class="secondary" id="pngBtn" disabled>Download PNG</button>
+  </div>
+  <div class="err" id="err"></div>
+</div>
+
+<script>
+const W = 1920, H = 1080;
+const state = { files: [], activeIdx: -1 };
+
+const dropEl = document.getElementById('drop');
+const fileInput = document.getElementById('fileInput');
+const filelistEl = document.getElementById('filelist');
+const errEl = document.getElementById('err');
+const canvasWrap = document.getElementById('canvasWrap');
+const pngBtn = document.getElementById('pngBtn');
+const metaEl = document.getElementById('meta');
+const metaFormatEl = document.getElementById('metaFormat');
+const metaResEl = document.getElementById('metaRes');
+
+const FORMAT_LABELS = {
+  rgba32: 'RGBA32 (8-bit, 4 ch)',
+  rgb24: 'RGB24 (8-bit, 3 ch)',
+  yuyv: 'YUV 4:2:2 (YUYV)'
+};
+
+let canvas = null, ctx = null;
+
+dropEl.addEventListener('click', () => fileInput.click());
+['dragenter','dragover'].forEach(ev => dropEl.addEventListener(ev, e=>{ e.preventDefault(); dropEl.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev => dropEl.addEventListener(ev, e=>{ e.preventDefault(); dropEl.classList.remove('drag'); }));
+dropEl.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+function handleFiles(fileList){
+  [...fileList].forEach(f => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      state.files.push({ name: f.name, buf: reader.result });
+      renderFileList();
+      if(state.activeIdx === -1){ selectFile(state.files.length-1); }
+    };
+    reader.readAsArrayBuffer(f);
+  });
+}
+
+function renderFileList(){
+  filelistEl.innerHTML = '';
+  state.files.forEach((f, i) => {
+    const pill = document.createElement('div');
+    pill.className = 'filepill' + (i===state.activeIdx ? ' active' : '');
+    pill.innerHTML = `<span class="name">${f.name}</span><span class="rm" data-i="${i}">✕</span>`;
+    pill.addEventListener('click', (e) => {
+      if(e.target.classList.contains('rm')){
+        state.files.splice(i,1);
+        if(state.activeIdx===i) state.activeIdx = -1;
+        renderFileList();
+        if(state.activeIdx===-1) clearPreview();
+        return;
+      }
+      selectFile(i);
+    });
+    filelistEl.appendChild(pill);
+  });
+}
+
+function clearPreview(){
+  canvasWrap.innerHTML = 'Preview will appear here';
+  canvasWrap.classList.add('empty');
+  pngBtn.disabled = true;
+  canvas = null;
+  metaEl.style.display = 'none';
+}
+
+function clamp8(v){ return v<0?0:(v>255?255:v); }
+
+// Auto-detect pixel format purely from file size against the known 1920x1080 frame
+function detectFormat(byteLength){
+  if(byteLength === W*H*4) return 'rgba32';
+  if(byteLength === W*H*3) return 'rgb24';
+  if(byteLength === W*H*2) return 'yuyv';
+  return null;
+}
+
+function decode(buf, fmt){
+  const data = new Uint8Array(buf);
+  const out = new Uint8ClampedArray(W*H*4);
+
+  if(fmt==='rgb24'){
+    for(let i=0,j=0;i<W*H;i++,j+=3){
+      out[i*4]=data[j]; out[i*4+1]=data[j+1]; out[i*4+2]=data[j+2]; out[i*4+3]=255;
+    }
+  } else if(fmt==='rgba32'){
+    out.set(data.subarray(0, W*H*4));
+  } else if(fmt==='yuyv'){
+    for(let i=0,j=0;i<W*H;i+=2,j+=4){
+      const Y0=data[j], U=data[j+1], Y1=data[j+2], V=data[j+3];
+      const u=U-128, v=V-128;
+      const r0=clamp8(Y0+1.402*v), g0=clamp8(Y0-0.344136*u-0.714136*v), b0=clamp8(Y0+1.772*u);
+      const r1=clamp8(Y1+1.402*v), g1=clamp8(Y1-0.344136*u-0.714136*v), b1=clamp8(Y1+1.772*u);
+      out[i*4]=r0; out[i*4+1]=g0; out[i*4+2]=b0; out[i*4+3]=255;
+      out[(i+1)*4]=r1; out[(i+1)*4+1]=g1; out[(i+1)*4+2]=b1; out[(i+1)*4+3]=255;
+    }
+  }
+  return out;
+}
+
+function selectFile(i){
+  state.activeIdx = i;
+  renderFileList();
+  errEl.textContent = '';
+  const f = state.files[i];
+  const fmt = detectFormat(f.buf.byteLength);
+  if(!fmt){
+    clearPreview();
+    errEl.textContent = `Unrecognized file size for a 1920×1080 frame (${f.buf.byteLength.toLocaleString()} bytes).`;
+    return;
+  }
+  try{
+    const pixels = decode(f.buf, fmt);
+    canvasWrap.classList.remove('empty');
+    canvasWrap.innerHTML = '';
+    canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    canvasWrap.appendChild(canvas);
+    ctx = canvas.getContext('2d');
+    ctx.putImageData(new ImageData(pixels, W, H), 0, 0);
+    pngBtn.disabled = false;
+    metaFormatEl.textContent = FORMAT_LABELS[fmt] || fmt;
+    metaResEl.textContent = `${W} × ${H}`;
+    metaEl.style.display = 'flex';
+  } catch(e){
+    clearPreview();
+    errEl.textContent = e.message;
+  }
+}
+
+pngBtn.addEventListener('click', () => {
+  if(!canvas) return;
+  const name = state.files[state.activeIdx].name;
+  canvas.toBlob((blob) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.download = name.replace(/\.[^.]*$/,'') + '.png';
+    link.href = url;
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, 'image/png');
+});
+</script>
+</body>
+</html>
