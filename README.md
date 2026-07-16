@@ -128,7 +128,7 @@ Multiple files can be loaded simultaneously; each is held in memory as a raw `Ar
 
 ## Usage
 
-1. Visit [it here](https://itsrealm12c.github.io/clf) in any modern browser — no build step, no install.
+1. Visit it by [clicking here](https://itsrealm12c.github.io/clf) in any modern browser — no build step, no install.
 2. Drag one or more raw dump files onto the drop zone (or click to browse).
 3. CLF checks each file's byte length against the three known-good sizes and decodes automatically.
 4. If a file doesn't match any expected size, an inline error reports the expected vs. actual byte count rather than failing silently.
